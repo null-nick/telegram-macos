@@ -11,7 +11,7 @@ public final class Dock {
 
     static func animateNextIconChange(path: String?, from view: NSView, rect: CGRect, contents: Any) {
         assert(Thread.isMainThread)
-        animation?.cancel()
+        animation?.cancel(animated: true)
         animation = nil
         animationSource = (path, DockIconAnimationSource(view: view, rect: rect, contents: contents))
     }
@@ -19,14 +19,8 @@ public final class Dock {
     public static func setCustomAppIcon(path: String?) {
         assert(Thread.isMainThread)
 
+        if let pending = animationSource, pending.source.isRecent, pending.path != path { return }
         if animation != nil, animationPath == path { return }
-        animation?.cancel()
-        animation = nil
-        let source = animationSource?.path == path ? animationSource?.source : nil
-        if source != nil { animationSource = nil }
-        if hasAppliedIcon && appliedPath == path {
-            return
-        }
 
         let image: NSImage?
         if let path {
@@ -38,15 +32,25 @@ public final class Dock {
             image = nil
         }
 
+        animation?.cancel(animated: true)
+        animation = nil
+        let source = animationSource?.path == path ? animationSource?.source : nil
+        animationSource = nil
+        if hasAppliedIcon && appliedPath == path {
+            return
+        }
+
         if let source {
             let animation = DockIconAnimation(source: source)
             self.animation = animation
             animationPath = path
-            animation.start(image: image) { [weak animation] in
+            animation.start(onLanding: { [weak animation] in
+                guard let animation, self.animation === animation else { return }
+                applyIcon(image, path: path)
+            }, completion: { [weak animation] in
                 guard let animation, self.animation === animation else { return }
                 self.animation = nil
-                applyIcon(image, path: path)
-            }
+            })
         } else {
             applyIcon(image, path: path)
         }
@@ -66,6 +70,6 @@ public final class Dock {
             }
         }
         iconUpdate = update
-        iconQueue.async(execute: update)
+        iconQueue.asyncAfter(deadline: .now() + 0.2, execute: update)
     }
 }

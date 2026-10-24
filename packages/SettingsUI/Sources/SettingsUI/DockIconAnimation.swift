@@ -6,10 +6,12 @@ struct DockIconAnimationSource {
     weak var view: NSView?
     let rect: CGRect
     let contents: Any
-    let createdAt = CACurrentMediaTime()
+    var createdAt = CACurrentMediaTime()
+
+    var isRecent: Bool { CACurrentMediaTime() - createdAt < 1.0 }
 
     var screenRect: CGRect? {
-        guard CACurrentMediaTime() - createdAt < 1.0,
+        guard isRecent,
               let view, !view.isHiddenOrHasHiddenAncestor,
               let window = view.window, window.isVisible, !window.isMiniaturized,
               view.visibleRect.contains(rect) else {
@@ -22,16 +24,25 @@ struct DockIconAnimationSource {
 struct DockIconFlightPath {
     let source: CGRect
     let destination: CGRect
+    var screenFrames: [CGRect] = []
 
     var controlPoint: CGPoint {
         let distance = hypot(destination.midX - source.midX, destination.midY - source.midY)
+        let highestCenter = max(source.midY, destination.midY)
+        var height = highestCenter + min(110, max(36, distance * 0.14))
+        if let ceiling = screenFrames.filter({
+            $0.contains(CGPoint(x: source.midX, y: source.midY)) || $0.contains(CGPoint(x: destination.midX, y: destination.midY))
+        }).map(\.maxY).max() {
+            let clearance = max(hypot(source.width, source.height), hypot(destination.width, destination.height)) / 2 + 8
+            height = max(highestCenter, min(height, ceiling - clearance))
+        }
         return CGPoint(x: (source.midX + destination.midX) / 2,
-                       y: max(source.midY, destination.midY) + min(140, max(60, distance * 0.18)))
+                       y: height)
     }
 
     var duration: TimeInterval {
         let distance = hypot(destination.midX - source.midX, destination.midY - source.midY)
-        return min(0.65, max(0.4, Double(distance) / 2200))
+        return min(0.58, max(0.28, 0.24 + sqrt(Double(distance)) * 0.009))
     }
 
     func point(at progress: CGFloat) -> CGPoint {
@@ -50,8 +61,90 @@ struct DockIconFlightPath {
     }
 
     var bounds: CGRect {
-        return path().boundingBoxOfPath.insetBy(dx: -max(source.width, destination.width) / 2 - 2,
-                                              dy: -max(source.height, destination.height) / 2 - 2)
+        let extent = max(hypot(source.width, source.height), hypot(destination.width, destination.height)) / 2 + 2
+        return path().boundingBoxOfPath.insetBy(dx: -extent, dy: -extent)
+    }
+
+    func animation(relativeTo origin: CGPoint, beginTime: CFTimeInterval) -> CAAnimationGroup {
+        let position = CAKeyframeAnimation(keyPath: "position")
+        position.path = path(relativeTo: origin)
+        position.duration = duration
+        let size = CABasicAnimation(keyPath: "bounds")
+        size.fromValue = NSValue(rect: CGRect(origin: .zero, size: source.size))
+        size.toValue = NSValue(rect: CGRect(origin: .zero, size: destination.size))
+        size.duration = duration
+        let tilt = CAKeyframeAnimation(keyPath: "transform.rotation.z")
+        tilt.values = [0, min(0.08, max(-0.08, (destination.midX - source.midX) / 6000)), 0]
+        tilt.keyTimes = [0, 0.3, 1]
+        tilt.duration = duration
+        let group = CAAnimationGroup()
+        group.animations = [position, size, tilt]
+        group.duration = duration
+        group.beginTime = beginTime
+        group.timingFunction = CAMediaTimingFunction(controlPoints: 0.22, 0.4, 0.3, 1)
+        group.fillMode = .backwards
+        return group
+    }
+}
+
+struct DockIconLandingEffect {
+    let destination: CGRect
+
+    var diameter: CGFloat { max(destination.width, destination.height) * 1.6 }
+
+    var bounds: CGRect {
+        return CGRect(x: destination.midX - diameter / 2, y: destination.midY - diameter / 2,
+                      width: diameter, height: diameter).insetBy(dx: -4, dy: -4)
+    }
+
+    func addWaves(to layer: CALayer, relativeTo origin: CGPoint, beginTime: CFTimeInterval) {
+        let wave = CAShapeLayer()
+        wave.bounds = CGRect(x: 0, y: 0, width: diameter, height: diameter)
+        wave.position = CGPoint(x: destination.midX - origin.x, y: destination.midY - origin.y)
+        wave.path = CGPath(ellipseIn: wave.bounds.insetBy(dx: 2, dy: 2), transform: nil)
+        wave.fillColor = NSColor.clear.cgColor
+        wave.strokeColor = NSColor.white.cgColor
+        wave.lineWidth = 0.5
+        wave.opacity = 0
+        wave.contentsScale = layer.contentsScale
+        wave.shadowColor = NSColor.black.cgColor
+        wave.shadowOffset = CGSize(width: 0, height: -0.5)
+        wave.shadowOpacity = 0.12
+        wave.shadowRadius = 1
+        layer.insertSublayer(wave, at: 0)
+
+        let duration = 0.28
+        let scale = CABasicAnimation(keyPath: "transform.scale")
+        scale.fromValue = min(destination.width, destination.height) * 0.9 / diameter
+        scale.toValue = 1
+        scale.duration = duration
+        scale.timingFunction = CAMediaTimingFunction(controlPoints: 0.16, 1, 0.3, 1)
+        let opacity = CAKeyframeAnimation(keyPath: "opacity")
+        opacity.values = [0, 0.32, 0.1, 0]
+        opacity.keyTimes = [0, 0.12, 0.45, 1]
+        opacity.duration = duration
+        let width = CABasicAnimation(keyPath: "lineWidth")
+        width.fromValue = 1.4
+        width.toValue = wave.lineWidth
+        width.duration = duration
+        let group = CAAnimationGroup()
+        group.animations = [scale, opacity, width]
+        group.duration = duration
+        group.beginTime = beginTime
+        group.fillMode = .backwards
+        wave.add(group, forKey: "dockIconShockwave")
+    }
+
+    func settle(_ icon: CALayer, beginTime: CFTimeInterval) {
+        let opacity = CAKeyframeAnimation(keyPath: "opacity")
+        opacity.values = [1, 1, 0]
+        opacity.keyTimes = [0, 0.35, 1]
+        opacity.duration = 0.18
+        opacity.timingFunctions = [CAMediaTimingFunction(name: .linear), CAMediaTimingFunction(name: .easeInEaseOut)]
+        opacity.beginTime = beginTime
+        opacity.fillMode = .backwards
+        icon.opacity = 0
+        icon.add(opacity, forKey: "dockIconLanding")
     }
 }
 
@@ -147,7 +240,8 @@ final class DockIconAnimation {
 
     private static let positionQueue = DispatchQueue(label: "org.telegram.dock-icon-position", qos: .userInitiated)
     private let source: DockIconAnimationSource
-    private var panels: [NSPanel] = []
+    private var surfaces: [(panel: NSPanel, icon: CALayer)] = []
+    private var onLanding: (() -> Void)?
     private var completion: (() -> Void)?
     private var observers: [(NotificationCenter, NSObjectProtocol)] = []
 
@@ -155,7 +249,8 @@ final class DockIconAnimation {
         self.source = source
     }
 
-    func start(image: NSImage?, completion: @escaping () -> Void) {
+    func start(onLanding: @escaping () -> Void, completion: @escaping () -> Void) {
+        self.onLanding = onLanding
         self.completion = completion
         guard NSApplication.shared.isActive, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
               source.screenRect != nil, AXIsProcessTrusted() else {
@@ -184,36 +279,55 @@ final class DockIconAnimation {
                     self.finish()
                     return
                 }
-                self.animate(to: destination, image: image)
+                self.animate(to: destination)
             }
         }
     }
 
-    func cancel() {
+    func cancel(animated: Bool = false) {
+        onLanding = nil
         completion = nil
-        removePanels()
+        removeObservers()
+        guard animated, !surfaces.isEmpty, NSApplication.shared.isActive,
+              !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+            removePanels()
+            return
+        }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        CATransaction.setCompletionBlock { self.removePanels() }
+        for (panel, _) in surfaces {
+            guard let layer = panel.contentView?.layer else { continue }
+            let fade = CABasicAnimation(keyPath: "opacity")
+            fade.fromValue = layer.presentation()?.opacity ?? layer.opacity
+            fade.toValue = 0
+            fade.duration = 0.1
+            fade.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            layer.opacity = 0
+            layer.add(fade, forKey: "dockIconCancellation")
+        }
+        CATransaction.commit()
     }
 
-    private func animate(to rect: CGRect, image: NSImage?) {
+    private func animate(to rect: CGRect) {
+        let screens = NSScreen.screens
         guard NSApplication.shared.isActive, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
-              let sourceRect = source.screenRect, let primaryScreen = NSScreen.screens.first else {
+              let sourceRect = source.screenRect, let primaryScreen = screens.first else {
             finish()
             return
         }
         let destination = DockIconPosition.screenRect(from: rect, primaryScreenHeight: primaryScreen.frame.maxY)
-        guard AXIsProcessTrusted(), DockIconPosition.isVisible(destination, screens: NSScreen.screens.map(\.frame)) else {
+        guard AXIsProcessTrusted(), DockIconPosition.isVisible(destination, screens: screens.map(\.frame)) else {
             finish()
             return
         }
-        let flight = DockIconFlightPath(source: sourceRect, destination: destination)
-        var imageRect = CGRect(origin: .zero, size: CGSize(width: 256, height: 256))
-        let contents: Any = image?.cgImage(forProposedRect: &imageRect, context: nil, hints: nil) ?? source.contents
-        let startTime = CACurrentMediaTime()
+        let flight = DockIconFlightPath(source: sourceRect, destination: destination, screenFrames: screens.map(\.frame))
+        let landing = DockIconLandingEffect(destination: destination)
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        CATransaction.setCompletionBlock { [weak self] in self?.finish() }
-        for screen in NSScreen.screens {
-            let frame = flight.bounds.intersection(screen.frame)
+        CATransaction.setCompletionBlock { [weak self] in self?.land(with: landing) }
+        for screen in screens {
+            let frame = flight.bounds.union(landing.bounds).intersection(screen.frame)
             guard !frame.isEmpty, !frame.isNull else { continue }
             let panel = DockIconAnimationPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
             panel.isReleasedWhenClosed = false
@@ -227,50 +341,76 @@ final class DockIconAnimation {
             panel.animationBehavior = .none
             let view = NSView(frame: CGRect(origin: .zero, size: frame.size))
             view.wantsLayer = true
+            view.layer?.contentsScale = screen.backingScaleFactor
             view.setAccessibilityElement(false)
             panel.contentView = view
             let layer = CALayer()
-            layer.contents = contents
+            layer.contents = source.contents
             layer.contentsGravity = .resizeAspect
             layer.contentsScale = screen.backingScaleFactor
+            layer.minificationFilter = .trilinear
+            layer.allowsEdgeAntialiasing = true
             layer.bounds = CGRect(origin: .zero, size: destination.size)
             layer.position = CGPoint(x: destination.midX - frame.minX, y: destination.midY - frame.minY)
             view.layer?.addSublayer(layer)
-            let position = CAKeyframeAnimation(keyPath: "position")
-            position.path = flight.path(relativeTo: frame.origin)
-            position.duration = flight.duration
-            let size = CABasicAnimation(keyPath: "bounds")
-            size.fromValue = NSValue(rect: CGRect(origin: .zero, size: sourceRect.size))
-            size.toValue = NSValue(rect: layer.bounds)
-            size.duration = flight.duration
-            let group = CAAnimationGroup()
-            group.animations = [position, size]
-            group.duration = flight.duration
-            group.beginTime = startTime
-            group.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            layer.add(group, forKey: "dockIconFlight")
-            panels.append(panel)
+            surfaces.append((panel, layer))
+        }
+        let startTime = CACurrentMediaTime() + 1.0 / 120.0
+        for (panel, layer) in surfaces {
+            layer.add(flight.animation(relativeTo: panel.frame.origin, beginTime: startTime), forKey: "dockIconFlight")
             panel.orderFrontRegardless()
         }
         CATransaction.commit()
-        if panels.isEmpty { finish() }
+        if surfaces.isEmpty { finish() }
+    }
+
+    private func land(with effect: DockIconLandingEffect) {
+        guard let onLanding, completion != nil else { return }
+        guard NSApplication.shared.isActive, AXIsProcessTrusted(), !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+            finish()
+            return
+        }
+        self.onLanding = nil
+        onLanding()
+        guard completion != nil else { return }
+        let startTime = CACurrentMediaTime()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        CATransaction.setCompletionBlock { [weak self] in self?.finish() }
+        for (panel, icon) in surfaces {
+            guard panel.frame.intersects(effect.bounds), let layer = panel.contentView?.layer else {
+                panel.orderOut(nil)
+                continue
+            }
+            effect.addWaves(to: layer, relativeTo: panel.frame.origin, beginTime: startTime)
+            effect.settle(icon, beginTime: startTime)
+        }
+        CATransaction.commit()
+        NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .drawCompleted)
     }
 
     private func finish() {
         guard let completion else { return }
+        let onLanding = self.onLanding
+        self.onLanding = nil
         self.completion = nil
+        removePanels()
+        onLanding?()
         completion()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [self] in removePanels() }
+    }
+
+    private func removeObservers() {
+        for (center, observer) in observers { center.removeObserver(observer) }
+        observers.removeAll()
     }
 
     private func removePanels() {
-        for (center, observer) in observers { center.removeObserver(observer) }
-        observers.removeAll()
-        for panel in panels {
+        removeObservers()
+        for (panel, _) in surfaces {
             panel.contentView?.layer?.sublayers?.forEach { $0.removeAllAnimations() }
             panel.close()
         }
-        panels.removeAll()
+        surfaces.removeAll()
     }
 
     deinit {

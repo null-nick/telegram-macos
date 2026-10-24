@@ -219,7 +219,7 @@ private final class DockIconView : Control {
     }
 
     public override func stateDidUpdate(_ state: ControlState) {
-        scaleOnClick = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        content.opacity = state == .Highlight ? 0.8 : 1
         super.stateDidUpdate(state)
     }
     
