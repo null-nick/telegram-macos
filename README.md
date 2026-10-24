@@ -71,7 +71,8 @@ You can fork this application and make something awesome! Make sure that your fo
 For a local test build, install the prerequisites in [INSTALL.md](INSTALL.md), then copy
 `Telegram-Mac/Local.xcconfig.example` to `Telegram-Mac/Local.xcconfig`. Fill in your API ID,
 API hash, a unique bundle ID, and the team ID of your installed Apple Development certificate.
-The local configuration is ignored by Git. Then run:
+The local configuration is ignored by Git and loaded only by the local build script.
+Direct Xcode and release builds do not load it automatically. Then run:
 
 ```sh
 sh scripts/build-local.sh

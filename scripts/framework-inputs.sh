@@ -217,6 +217,9 @@ framework_stamp() {
     echo "architectures=${TELEGRAM_BUILD_ARCHS:-arm64 x86_64}"
     echo "xcode=${FRAMEWORK_XCODE_VERSION:-$(xcodebuild -version 2>/dev/null | tr '\n' ' ')}"
     echo "deployment=${MACOSX_DEPLOYMENT_TARGET:-default}"
+    if [ "$LIB" = wallet-engine ]; then
+        echo "wallet-deployment=${TELEGRAM_WALLET_DEPLOYMENT_TARGET:-10.15}"
+    fi
     framework_extra_fingerprint "$LIB"
     while IFS= read -r INPUT; do
         [ -n "$INPUT" ] || continue

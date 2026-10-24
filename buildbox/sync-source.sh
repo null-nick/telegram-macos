@@ -6,6 +6,8 @@ DEST_DIR="$2"
 
 mkdir -p "$DEST_DIR"
 rsync -a --delete \
+    --filter='H /Telegram-Mac/Local.xcconfig' \
+    --filter='R /Telegram-Mac/Local.xcconfig' \
     --exclude='/core-xprojects/*/build/' \
     --exclude='/Telegram-Mac/Release.xcconfig' \
     --exclude='/packages/WalletEngine/wallet_engineFFI.xcframework/' \

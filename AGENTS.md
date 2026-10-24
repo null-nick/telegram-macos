@@ -23,7 +23,7 @@ Read the matching document before starting the task.
 
 Use `scripts/build-local.sh` on macOS with full Xcode. It builds a Debug app without archiving or deploying it.
 
-The script passes `SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) DEBUG BETA` to every Swift target, including packages. Local Debug builds therefore include beta features such as the app icon picker while retaining Debug behavior and inherited conditions like `SHARE`.
+The script passes `SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) DEBUG` to Swift targets, preserving inherited conditions like `SHARE`. Do not force `BETA` into packages: it disables code guarded by `DEBUG && !BETA`, including voice dictation.
 
 | Command | Purpose |
 |---|---|
@@ -43,11 +43,13 @@ The script applies Xcode 27 compatibility changes and disables Rust stripping th
 - Copy `Telegram-Mac/Local.xcconfig.example` to `Telegram-Mac/Local.xcconfig` if the local file does not exist; preserve an existing file.
 - Put personal API credentials, bundle ID and signing team only in the ignored `Local.xcconfig`, using `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `TELEGRAM_BUNDLE_ID` and `TELEGRAM_TEAM_ID`.
 - Keep `DEVELOPMENT_TEAM = $(TELEGRAM_TEAM_ID)` in that file. The app, share extension and app groups use the same identity settings. Local builds require an installed Apple Development certificate for the configured team.
+- Load `Local.xcconfig` only through the local script's explicit `-xcconfig` argument. Do not include it from shared or release configurations. Release source sync must exclude it and remove stale copies from the destination.
+- Keep the sandbox entitlements and release wallet deployment target unchanged. The local script passes `TELEGRAM_WALLET_DEPLOYMENT_TARGET` explicitly when using a newer local deployment target; wallet cache stamps include this override.
 - Do not copy personal values into source files, examples, documentation, tests or commit messages. Inspect the staged diff before committing and keep `Local.xcconfig` untracked.
 
 ### Updates in Local Builds
 
-Keep `TELEGRAM_DISABLE_UPDATES=YES` for local builds. The script sets it, and `Local.xcconfig` should include it for builds launched directly from Xcode. It disables checks, downloads, manual update actions, crash recovery updates and installation on quit, and hides the updater UI. Changing the bundle ID or feed alone does not disable updates.
+Keep `TELEGRAM_DISABLE_UPDATES=YES` for local builds. The script sets it through an explicit build setting. It disables checks, downloads, manual update actions, crash recovery updates and installation on quit, and hides the updater UI. Changing the bundle ID or feed alone does not disable updates. Direct Xcode builds do not automatically load the local configuration.
 
 The policy is read from the built app's Info.plist. Source or configuration changes take effect after rebuilding; an already-built or running app retains its previous update behavior. Distribution builds without the local override keep updates enabled.
 
@@ -100,7 +102,7 @@ Only the modules you will touch most. Find anything else with `grep -rn "func Na
 
 ### Moving Code into Packages
 - Packages enforce runtime exclusivity (the app has it off), so `inout` access conflicts can trap after a move
-- `BETA`/`STABLE`/`ALPHA`/`APP_STORE` are false in packages in Xcode UI builds; `buildbox/build-mac.sh` passes the release channel, and `scripts/build-local.sh` passes `DEBUG BETA`
+- `BETA`/`STABLE`/`ALPHA`/`APP_STORE` are false in packages in Xcode UI builds; `buildbox/build-mac.sh` passes the release channel, and `scripts/build-local.sh` passes `DEBUG`
 - App extensions like `Peer.isForum` and `Peer.displayLetters` shadow TelegramCore members; in a package call them through hooks
 
 

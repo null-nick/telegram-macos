@@ -84,6 +84,7 @@ fi
 if [ -n "${MACOSX_DEPLOYMENT_TARGET:-}" ]; then
     BUILD_SETTINGS+=("MACOSX_DEPLOYMENT_TARGET=$MACOSX_DEPLOYMENT_TARGET")
 fi
+export TELEGRAM_WALLET_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-10.15}"
 
 if [ "$DRY_RUN" = no ]; then
     REQUIRED_TOOLS=(python3 git)
@@ -140,7 +141,7 @@ run_step app xcodebuild build \
     -destination "$DESTINATION" \
     -derivedDataPath "$OUTPUT_DIR/DerivedData" \
     "${BUILD_SETTINGS[@]}" \
-    'SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) DEBUG BETA' \
+    'SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) DEBUG' \
     CODE_SIGN_STYLE=Manual \
     CODE_SIGN_IDENTITY="Apple Development" \
     TELEGRAM_DISABLE_UPDATES=YES \

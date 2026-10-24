@@ -185,8 +185,10 @@ It prints the temporary directory containing its build logs.
 Copy `Telegram-Mac/Local.xcconfig.example` to `Telegram-Mac/Local.xcconfig` and fill in
 `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `TELEGRAM_BUNDLE_ID` and `TELEGRAM_TEAM_ID`.
 Use a distinct bundle ID for local testing. This file is ignored by Git and supplies the
-credentials and identity to both the app and share extension. Without it, direct Xcode builds
-retain the upstream defaults; the local build script requires the file.
+credentials and identity to both the app and share extension when explicitly loaded by
+the local build script with `-xcconfig`. The script requires this file. Shared configurations
+do not include it, so direct Xcode and release builds retain the upstream defaults.
+Release source sync excludes the file and removes any stale copy in its destination.
 
 `scripts/build-local.sh` signs the Debug build with an Apple Development certificate for
 the configured team. The certificate and its private key must be installed in Keychain.
@@ -197,11 +199,11 @@ an Xcode configuration override so workspace dependencies use the same signing t
 App groups and runtime storage paths derive from the same team and bundle settings.
 
 The local build script sets `TELEGRAM_DISABLE_UPDATES=YES`. The local configuration template
-also sets it so builds launched from Xcode use the same policy. The updater does not check,
-download or install updates, including on quit or during crash recovery, and its UI is hidden.
-Existing local configuration files should include this setting when building directly in Xcode.
-Distribution builds without the local override keep updates enabled. These changes take effect
-after rebuilding; they do not change an already-running app.
+also sets it. The updater does not check, download or install updates, including on quit or
+during crash recovery, and its UI is hidden. Use the local script for this policy; simply
+creating `Local.xcconfig` does not change builds launched from Xcode.
+Distribution builds keep updates enabled. These changes take effect after rebuilding;
+they do not change an already-running app.
 
 ## Build configurations and release channels
 
@@ -231,10 +233,16 @@ the app target; Swift packages under `packages/` do not read it, so the channel 
 the command line, which applies to every target including packages. Builds started from the Xcode UI
 do not get it, so `#if BETA` / `STABLE` / `ALPHA` / `APP_STORE` inside packages are false there.
 
-`scripts/build-local.sh` passes `SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) DEBUG BETA`
-for both full and `--app-only` builds. This enables beta features, including the app icon picker,
-in Swift packages while keeping the Debug configuration and inherited target conditions.
-Local builds still disable the updater.
+`scripts/build-local.sh` passes `SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) DEBUG`
+for both full and `--app-only` builds, preserving inherited target conditions. It does not
+force the beta channel into packages, so `#if DEBUG && !BETA` features such as voice
+dictation remain available. Local builds still disable the updater.
+
+The wallet engine keeps its existing macOS 10.15 deployment target in release builds,
+independently of Xcode's inherited `MACOSX_DEPLOYMENT_TARGET`. The local script explicitly
+sets `TELEGRAM_WALLET_DEPLOYMENT_TARGET` to its local deployment target when needed,
+including macOS 12.0 with Xcode 27. Changing that override invalidates the wallet cache.
+The Mac App Store sandbox entitlements retain their existing app and keychain groups.
 
 `buildbox/build-mac.sh` then extracts `Telegram.app` and its dSYM. GitLab runs this direct Mac
 build through `buildbox/internal.sh`, which verifies and deploys the result while

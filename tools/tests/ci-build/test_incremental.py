@@ -2,6 +2,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import plistlib
 import shutil
 import subprocess
 import tempfile
@@ -143,6 +144,23 @@ class SyncTests(TemporaryTest):
         self.assertEqual(result.returncode, 37)
         self.assertEqual(timing.read_text().split("\t")[::2], ["failure", "37\n"])
 
+    def test_source_sync_excludes_local_config_and_removes_stale_copies(self):
+        source = self.root / "checkout"
+        target = self.root / "build"
+        private = write(self.root / "private/Local.xcconfig", "LOCAL_ONLY = YES\n")
+        local = write(source / "Telegram-Mac/Local.xcconfig", private.read_text())
+        for symlink in [False, True]:
+            if symlink:
+                local.unlink()
+                local.symlink_to(private)
+            stale = write(target / "Telegram-Mac/Local.xcconfig", "stale override")
+            run(["sh", str(ROOT / "buildbox/sync-source.sh"), str(source), str(target)])
+            self.assertFalse(stale.exists())
+            self.assertFalse(stale.is_symlink())
+            self.assertEqual(local.read_text(), "LOCAL_ONLY = YES\n")
+            run(["sh", str(ROOT / "buildbox/sync-source.sh"), str(source), str(target)])
+            self.assertFalse(stale.exists())
+
 
 class FrameworkTests(TemporaryTest):
     libraries = ["OpenH264", "OpenSSL", "libopus", "libvpx", "mozjpeg", "libwebp", "dav1d", "ffmpeg", "webrtc", "tde2e", "wallet-engine", "mtproto-engine"]
@@ -150,7 +168,7 @@ class FrameworkTests(TemporaryTest):
 
     def setUp(self):
         super().setUp()
-        for name in ["configure_frameworks.sh", "framework-inputs.sh", "sync-headers.sh", "time-step.sh", "check-wallet-engine-bindings.sh"]:
+        for name in ["configure_frameworks.sh", "framework-inputs.sh", "build-architectures.sh", "sync-headers.sh", "time-step.sh", "check-wallet-engine-bindings.sh"]:
             destination = self.root / "scripts" / name
             destination.parent.mkdir(exist_ok=True)
             shutil.copy2(ROOT / "scripts" / name, destination)
@@ -194,6 +212,8 @@ fi
             executable.chmod(0o755)
         self.environment = dict(os.environ, PATH=str(self.root / "bin") + os.pathsep + os.environ["PATH"])
         self.environment.pop("BUILD_TIMING_LOG", None)
+        for name in ["ARCHS", "TELEGRAM_BUILD_ARCHS", "TELEGRAM_WALLET_DEPLOYMENT_TARGET"]:
+            self.environment.pop(name, None)
 
     def configure(self, **environment):
         return run(["sh", str(self.root / "scripts/configure_frameworks.sh")], cwd=self.root, env=dict(self.environment, **environment))
@@ -242,6 +262,130 @@ fi
         self.configure()
         self.assertEqual(self.runs()[12:], ["wallet-engine"])
 
+    def test_wallet_deployment_override_invalidates_only_wallet_cache(self):
+        self.configure()
+        self.configure(TELEGRAM_WALLET_DEPLOYMENT_TARGET="12.0")
+        self.assertEqual(self.runs()[12:], ["wallet-engine"])
+        self.configure(TELEGRAM_WALLET_DEPLOYMENT_TARGET="12.0")
+        self.assertEqual(len(self.runs()), 13)
+        self.configure()
+        self.assertEqual(self.runs()[13:], ["wallet-engine"])
+
+
+class WalletDeploymentTests(TemporaryTest):
+    def test_release_target_ignores_xcode_target_and_local_override_is_explicit(self):
+        script = self.root / "core-xprojects/wallet-engine/wallet-engine/build.sh"
+        script.parent.mkdir(parents=True)
+        shutil.copy2(ROOT / "core-xprojects/wallet-engine/wallet-engine/build.sh", script)
+        (self.root / "scripts").mkdir()
+        shutil.copy2(ROOT / "scripts/build-architectures.sh", self.root / "scripts/build-architectures.sh")
+        source = self.root / "source"
+        write(source / "Cargo.toml", "fixture")
+        record = self.root / "cargo.json"
+        cargo = write(self.root / "bin/cargo", '''#!/usr/bin/env python3
+import json
+import os
+from pathlib import Path
+import sys
+Path(os.environ["CARGO_RECORD"]).write_text(json.dumps({"arguments": sys.argv[1:], "deployment": os.environ["MACOSX_DEPLOYMENT_TARGET"]}))
+sys.exit(37)
+''')
+        cargo.chmod(0o755)
+        environment = dict(os.environ, CARGO=str(cargo), CARGO_RECORD=str(record), MACOSX_DEPLOYMENT_TARGET="11.0")
+        environment.pop("TELEGRAM_WALLET_DEPLOYMENT_TARGET", None)
+        for arch, target in [("arm64", "aarch64-apple-darwin"), ("x86_64", "x86_64-apple-darwin")]:
+            for override, expected in [(None, "10.15"), ("12.0", "12.0"), ("10.13", "10.15")]:
+                with self.subTest(arch=arch, override=override):
+                    env = dict(environment, TELEGRAM_BUILD_ARCHS=arch)
+                    if override is not None:
+                        env["TELEGRAM_WALLET_DEPLOYMENT_TARGET"] = override
+                    result = subprocess.run(["bash", str(script), str(source), str(self.root / "build"), str(self.root / "package")], env=env, capture_output=True)
+                    self.assertEqual(result.returncode, 37, result.stderr.decode())
+                    invocation = json.loads(record.read_text())
+                    self.assertEqual(invocation["deployment"], expected)
+                    self.assertEqual(invocation["arguments"][-2:], ["--target", target])
+
+
+class LocalBuildTests(TemporaryTest):
+    def test_app_only_uses_explicit_local_config_without_forcing_beta(self):
+        for name in ["build-local.sh", "build-architectures.sh", "time-step.sh"]:
+            destination = self.root / "scripts" / name
+            destination.parent.mkdir(exist_ok=True)
+            shutil.copy2(ROOT / "scripts" / name, destination)
+        local = write(self.root / "Telegram-Mac/Local.xcconfig", "TELEGRAM_BUNDLE_ID = local.example.Test\n")
+        write(self.root / "scripts/configure_frameworks.sh", "exit 37\n")
+        write(self.root / "scripts/xcode27.sh", "exit 0\n")
+        record = self.root / "app.json"
+        mock = write(self.root / "bin/xcodebuild", '''#!/usr/bin/env python3
+import json
+import os
+from pathlib import Path
+import sys
+args = sys.argv[1:]
+if args == ["-version"]:
+    print("Xcode 27.0")
+elif args == ["-showComponent", "MetalToolchain"]:
+    print("Status: installed")
+else:
+    Path(os.environ["APP_RECORD"]).write_text(json.dumps({"arguments": args, "wallet_deployment": os.environ["TELEGRAM_WALLET_DEPLOYMENT_TARGET"]}))
+    derived = Path(args[args.index("-derivedDataPath") + 1])
+    (derived / "Build/Products/Debug/Telegram.app").mkdir(parents=True)
+''')
+        mock.chmod(0o755)
+        environment = dict(os.environ, PATH=str(mock.parent) + os.pathsep + os.environ["PATH"], DEVELOPER_DIR=str(self.root / "Xcode"), APP_RECORD=str(record))
+        environment.pop("MACOSX_DEPLOYMENT_TARGET", None)
+        command = ["bash", str(self.root / "scripts/build-local.sh"), "arm64", "--app-only"]
+        run(command + ["--dry-run"], env=environment)
+        self.assertFalse(record.exists())
+        self.assertFalse((self.root / ".build").exists())
+        run(command, env=environment)
+        invocation = json.loads(record.read_text())
+        args = invocation["arguments"]
+        self.assertEqual(args[args.index("-configuration") + 1], "Debug")
+        self.assertEqual(args[args.index("-xcconfig") + 1], str(local))
+        self.assertIn("SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) DEBUG", args)
+        self.assertFalse(any("BETA" in arg for arg in args))
+        self.assertIn("TELEGRAM_DISABLE_UPDATES=YES", args)
+        self.assertEqual(invocation["wallet_deployment"], "12.0")
+
+
+class LocalConfigurationTests(TemporaryTest):
+    def test_shared_config_ignores_local_file_unless_explicitly_selected(self):
+        project = self.root / "Fixture.xcodeproj/project.pbxproj"
+        project.parent.mkdir()
+        objects = {
+            "PROJECT": {"isa": "PBXProject", "attributes": {}, "buildConfigurationList": "PROJECT_CONFIGS", "compatibilityVersion": "Xcode 3.2", "developmentRegion": "en", "hasScannedForEncodings": 0, "knownRegions": ["en"], "mainGroup": "GROUP", "projectDirPath": "", "projectRoot": "", "targets": ["TARGET"]},
+            "GROUP": {"isa": "PBXGroup", "children": ["COMMON"], "sourceTree": "<group>"},
+            "COMMON": {"isa": "PBXFileReference", "lastKnownFileType": "text.xcconfig", "path": "common.xcconfig", "sourceTree": "<group>"},
+            "TARGET": {"isa": "PBXAggregateTarget", "buildConfigurationList": "TARGET_CONFIGS", "buildPhases": [], "dependencies": [], "name": "Fixture", "productName": "Fixture"},
+        }
+        for kind in ["PROJECT", "TARGET"]:
+            objects[kind + "_CONFIGS"] = {"isa": "XCConfigurationList", "buildConfigurations": [kind + "_Debug", kind + "_Release"], "defaultConfigurationIsVisible": 0, "defaultConfigurationName": "Release"}
+            for configuration in ["Debug", "Release"]:
+                objects[kind + "_" + configuration] = {"isa": "XCBuildConfiguration", "buildSettings": {}, "name": configuration}
+                if kind == "PROJECT":
+                    objects[kind + "_" + configuration]["baseConfigurationReference"] = "COMMON"
+        project.write_bytes(plistlib.dumps({"archiveVersion": "1", "classes": {}, "objectVersion": "46", "objects": objects, "rootObject": "PROJECT"}))
+        shutil.copy2(ROOT / "Telegram-Mac/common.xcconfig", self.root / "common.xcconfig")
+        local = write(self.root / "Local.xcconfig", "TELEGRAM_BUNDLE_ID = local.example.Test\nTELEGRAM_TEAM_ID = LOCALTEAM\nTELEGRAM_DISABLE_UPDATES = YES\n")
+        environment = dict(os.environ)
+        environment.pop("XCODE_XCCONFIG_FILE", None)
+        for configuration in ["Debug", "Release"]:
+            command = ["xcodebuild", "-project", str(project.parent), "-scheme", "Fixture", "-configuration", configuration, "-derivedDataPath", str(self.root / "DerivedData"), "-showBuildSettings", "-json"]
+            result = json.loads(run(command, env=environment).stdout)[0]
+            self.assertNotIn("error", result)
+            settings = result["buildSettings"]
+            self.assertEqual(settings["TELEGRAM_DISABLE_UPDATES"], "NO")
+            self.assertNotEqual(settings["TELEGRAM_TEAM_ID"], "LOCALTEAM")
+            self.assertNotEqual(settings["TELEGRAM_BUNDLE_ID"], "local.example.Test")
+            if configuration == "Debug":
+                result = json.loads(run(command + ["-xcconfig", str(local)], env=environment).stdout)[0]
+                self.assertNotIn("error", result)
+                selected = result["buildSettings"]
+                self.assertEqual(selected["TELEGRAM_DISABLE_UPDATES"], "YES")
+                self.assertEqual(selected["TELEGRAM_TEAM_ID"], "LOCALTEAM")
+                self.assertEqual(selected["TELEGRAM_BUNDLE_ID"], "local.example.Test")
+
 
 class ArchiveTests(TemporaryTest):
     def setUp(self):
@@ -251,8 +395,9 @@ class ArchiveTests(TemporaryTest):
             destination = self.source / name
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / name, destination)
-        write(self.source / "scripts/configure_frameworks.sh", 'exit "${PREPARE_RESULT:-0}"\n')
+        write(self.source / "scripts/configure_frameworks.sh", 'test ! -e Telegram-Mac/Local.xcconfig || exit 38\nexit "${PREPARE_RESULT:-0}"\n')
         write(self.source / "Telegram-Mac/Release.xcconfig", "STABLE")
+        write(self.source / "Telegram-Mac/Local.xcconfig", "TELEGRAM_DISABLE_UPDATES = YES\n")
         for channel in ["Beta", "Alpha", "Stable", "Appstore", "AppStore"]:
             write(self.source / "configurations" / (channel + ".xcconfig"), channel)
         self.record = self.root / "archive-arguments.json"
@@ -262,6 +407,8 @@ import os
 from pathlib import Path
 import sys
 Path(os.environ["ARCHIVE_RECORD"]).write_text(json.dumps(sys.argv[1:]))
+if Path("Telegram-Mac/Local.xcconfig").exists():
+    sys.exit(38)
 if os.environ.get("ARCHIVE_RESULT"):
     print("error: deliberate archive failure")
     sys.exit(int(os.environ["ARCHIVE_RESULT"]))
@@ -303,7 +450,9 @@ print("Build Timing Summary\\nCompileSwift: fixture")
         self.build()
         config = self.root / "builds/build-Beta/telegrammacos/Telegram-Mac/Release.xcconfig"
         before = config.stat().st_mtime_ns
+        write(config.parent / "Local.xcconfig", "stale local override")
         self.build(TELEGRAM_COMPILATION_CACHE="YES")
+        self.assertFalse((config.parent / "Local.xcconfig").exists())
         self.assertEqual(before, config.stat().st_mtime_ns)
         self.assertIn("COMPILATION_CACHE_ENABLE_CACHING=YES", json.loads(self.record.read_text()))
         self.build(TELEGRAM_COMPILATION_CACHE="NO")
@@ -322,6 +471,8 @@ print("Build Timing Summary\\nCompileSwift: fixture")
 
 class TlottieTests(TemporaryTest):
     def test_warm_build_preserves_library_and_does_not_reinstall_toolchain(self):
+        (self.root / "scripts").mkdir()
+        shutil.copy2(ROOT / "scripts/build-architectures.sh", self.root / "scripts/build-architectures.sh")
         script = self.root / "core-xprojects/tlottie/build.sh"
         script.parent.mkdir(parents=True)
         shutil.copy2(ROOT / "core-xprojects/tlottie/build.sh", script)
