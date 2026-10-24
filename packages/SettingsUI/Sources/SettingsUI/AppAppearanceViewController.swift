@@ -568,6 +568,11 @@ private func appAppearanceEntries(appearance: Appearance, state: State, settings
             return DockIconRowItem(initialSize, stableId: stableId, viewType: .singleItem, context: arguments.context, dockIcons: dockIcons.icons, selected: dockTuple.settings.iconSelected, action: arguments.selectAppIcon)
         }))
         index += 1
+
+        entries.append(.desc(sectionId: sectionId, index: index, text: .markdown(_NSLocalizedString("AppearanceSettings.DockIconAnimation.Info"), linkHandler: { _ in
+            DockIconAnimation.openAccessibilitySettings()
+        }), data: .init(viewType: .textBottomItem)))
+        index += 1
         
         entries.append(.sectionId(sectionId, type: .normal))
         sectionId += 1

@@ -127,7 +127,7 @@ public final class DockIconRowItem: GeneralRowItem {
 }
 
 private final class DockIconView : Control {
-    
+    private static var didExplainAccessibility = false
     
     private class Indicator : View {
         private let loading = ProgressIndicator(frame: NSMakeRect(0, 0, 30, 30))
@@ -194,8 +194,19 @@ private final class DockIconView : Control {
         selected.opacity = 0
         
         set(handler: { [weak self] _ in
-            if let rowItem = self?.rowItem, let item = self?.item, !item.selected {
+            if let self, let rowItem = self.rowItem, let item = self.item, !item.selected {
+                let canSelect = !item.icon.isPremium || rowItem.context.isPremium
+                if canSelect, let contents = self.content.contents {
+                    Dock.animateNextIconChange(path: item.icon.resourcePath(rowItem.context), from: self, rect: self.content.frame, contents: contents)
+                }
                 rowItem.callback(item.icon)
+                if canSelect, !DockIconAnimation.hasAccessibilityAccess,
+                   !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion, !Self.didExplainAccessibility {
+                    Self.didExplainAccessibility = true
+                    showModalText(for: rowItem.context.window, text: _NSLocalizedString("AppearanceSettings.DockIconAnimation.PermissionInfo"), button: _NSLocalizedString("AppearanceSettings.DockIconAnimation.OpenSettings"), callback: { _ in
+                        DockIconAnimation.openAccessibilitySettings()
+                    })
+                }
             }
         }, for: .Click)
         
