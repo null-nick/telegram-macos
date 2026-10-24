@@ -107,6 +107,16 @@ step, local signing, disabled updater, logs and existing DerivedData. It also wo
 and the interactive architecture prompt. Xcode may still rebuild affected Swift packages and workspace
 dependencies. Run without `--app-only` when native sources or the required framework architectures change.
 
+To enable beta features in the local Debug app, add `--beta`:
+
+```sh
+sh scripts/build-local.sh arm64 --app-only --beta
+```
+
+This opts app and Swift package targets into `BETA`; features guarded by `DEBUG && !BETA`,
+such as voice dictation, are excluded. Updates remain disabled. Switching this flag may
+recompile Swift targets, while `--app-only` still skips native framework preparation.
+
 Repeated builds reuse compatible native outputs. Changing architectures rebuilds those shared
 outputs; the regular framework and release scripts still default to both architectures.
 The script checks tools but does not install them. The legacy `setup_build_env.sh` still requests

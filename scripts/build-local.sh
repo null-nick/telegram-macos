@@ -6,11 +6,13 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 SELECTION=""
 DRY_RUN=no
 APP_ONLY=no
+SWIFT_CONDITIONS='$(inherited) DEBUG'
 
 usage() {
-    echo "Usage: sh scripts/build-local.sh [arm64|x86_64|universal] [--app-only] [--dry-run]"
+    echo "Usage: sh scripts/build-local.sh [arm64|x86_64|universal] [--app-only] [--beta] [--dry-run]"
     echo "Without an architecture, prompts with this Mac's architecture as the default."
     echo "--app-only reuses prepared native frameworks and the architecture's DerivedData."
+    echo "--beta enables beta features in the local Debug build; updates remain disabled."
 }
 
 for ARGUMENT in "$@"; do
@@ -18,6 +20,7 @@ for ARGUMENT in "$@"; do
         --help|-h) usage; exit 0 ;;
         --dry-run) DRY_RUN=yes ;;
         --app-only) APP_ONLY=yes ;;
+        --beta) SWIFT_CONDITIONS='$(inherited) DEBUG BETA' ;;
         arm64|x86_64|universal)
             if [ -n "$SELECTION" ]; then usage >&2; exit 2; fi
             SELECTION="$ARGUMENT"
@@ -141,7 +144,7 @@ run_step app xcodebuild build \
     -destination "$DESTINATION" \
     -derivedDataPath "$OUTPUT_DIR/DerivedData" \
     "${BUILD_SETTINGS[@]}" \
-    'SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) DEBUG' \
+    "SWIFT_ACTIVE_COMPILATION_CONDITIONS=$SWIFT_CONDITIONS" \
     CODE_SIGN_STYLE=Manual \
     CODE_SIGN_IDENTITY="Apple Development" \
     TELEGRAM_DISABLE_UPDATES=YES \

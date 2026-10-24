@@ -234,9 +234,11 @@ the command line, which applies to every target including packages. Builds start
 do not get it, so `#if BETA` / `STABLE` / `ALPHA` / `APP_STORE` inside packages are false there.
 
 `scripts/build-local.sh` passes `SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) DEBUG`
-for both full and `--app-only` builds, preserving inherited target conditions. It does not
-force the beta channel into packages, so `#if DEBUG && !BETA` features such as voice
-dictation remain available. Local builds still disable the updater.
+by default for both full and `--app-only` builds, preserving inherited target conditions.
+Pass `--beta` to use `$(inherited) DEBUG BETA` instead, enabling beta features in the app
+and Swift packages. This excludes `#if DEBUG && !BETA` features such as voice dictation.
+Both modes use the Debug configuration and disable the updater. Switching modes can
+recompile Swift targets; `--app-only` still reuses the prepared native frameworks.
 
 The wallet engine keeps its existing macOS 10.15 deployment target in release builds,
 independently of Xcode's inherited `MACOSX_DEPLOYMENT_TARGET`. The local script explicitly

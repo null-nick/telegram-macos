@@ -307,7 +307,7 @@ sys.exit(37)
 
 
 class LocalBuildTests(TemporaryTest):
-    def test_app_only_uses_explicit_local_config_without_forcing_beta(self):
+    def test_app_only_uses_explicit_local_config_and_optional_beta(self):
         for name in ["build-local.sh", "build-architectures.sh", "time-step.sh"]:
             destination = self.root / "scripts" / name
             destination.parent.mkdir(exist_ok=True)
@@ -329,24 +329,28 @@ elif args == ["-showComponent", "MetalToolchain"]:
 else:
     Path(os.environ["APP_RECORD"]).write_text(json.dumps({"arguments": args, "wallet_deployment": os.environ["TELEGRAM_WALLET_DEPLOYMENT_TARGET"]}))
     derived = Path(args[args.index("-derivedDataPath") + 1])
-    (derived / "Build/Products/Debug/Telegram.app").mkdir(parents=True)
+    (derived / "Build/Products/Debug/Telegram.app").mkdir(parents=True, exist_ok=True)
 ''')
         mock.chmod(0o755)
         environment = dict(os.environ, PATH=str(mock.parent) + os.pathsep + os.environ["PATH"], DEVELOPER_DIR=str(self.root / "Xcode"), APP_RECORD=str(record))
         environment.pop("MACOSX_DEPLOYMENT_TARGET", None)
         command = ["bash", str(self.root / "scripts/build-local.sh"), "arm64", "--app-only"]
-        run(command + ["--dry-run"], env=environment)
-        self.assertFalse(record.exists())
-        self.assertFalse((self.root / ".build").exists())
-        run(command, env=environment)
-        invocation = json.loads(record.read_text())
-        args = invocation["arguments"]
-        self.assertEqual(args[args.index("-configuration") + 1], "Debug")
-        self.assertEqual(args[args.index("-xcconfig") + 1], str(local))
-        self.assertIn("SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) DEBUG", args)
-        self.assertFalse(any("BETA" in arg for arg in args))
-        self.assertIn("TELEGRAM_DISABLE_UPDATES=YES", args)
-        self.assertEqual(invocation["wallet_deployment"], "12.0")
+        for options in [[], ["--beta"]]:
+            run(command + options + ["--dry-run"], env=environment)
+            self.assertFalse(record.exists())
+            self.assertFalse((self.root / ".build").exists())
+        for options, conditions in [([], "DEBUG"), (["--beta"], "DEBUG BETA"), ([], "DEBUG")]:
+            with self.subTest(options=options, conditions=conditions):
+                run(command + options, env=environment)
+                invocation = json.loads(record.read_text())
+                args = invocation["arguments"]
+                self.assertEqual(args[args.index("-configuration") + 1], "Debug")
+                self.assertEqual(args[args.index("-xcconfig") + 1], str(local))
+                self.assertIn("SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) " + conditions, args)
+                if not options:
+                    self.assertFalse(any("BETA" in arg for arg in args))
+                self.assertIn("TELEGRAM_DISABLE_UPDATES=YES", args)
+                self.assertEqual(invocation["wallet_deployment"], "12.0")
 
 
 class LocalConfigurationTests(TemporaryTest):

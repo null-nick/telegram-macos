@@ -23,13 +23,14 @@ Read the matching document before starting the task.
 
 Use `scripts/build-local.sh` on macOS with full Xcode. It builds a Debug app without archiving or deploying it.
 
-The script passes `SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) DEBUG` to Swift targets, preserving inherited conditions like `SHARE`. Do not force `BETA` into packages: it disables code guarded by `DEBUG && !BETA`, including voice dictation.
+The script passes `SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) DEBUG` to Swift targets by default, preserving inherited conditions like `SHARE`. Add `BETA` only when `--beta` is explicitly selected: it enables beta features but disables code guarded by `DEBUG && !BETA`, including voice dictation.
 
 | Command | Purpose |
 |---|---|
 | `sh scripts/build-local.sh` | Prompt for `arm64`, `x86_64` or `universal`, defaulting to this Mac's architecture |
 | `sh scripts/build-local.sh arm64` | Prepare native frameworks and build the app for Apple Silicon |
 | `sh scripts/build-local.sh arm64 --app-only` | Rebuild the app using existing native frameworks |
+| `sh scripts/build-local.sh arm64 --app-only --beta` | Rebuild with beta features enabled and updates still disabled |
 | `sh scripts/build-local.sh arm64 --app-only --dry-run` | Preview the app build command without building or applying compatibility changes |
 
 Replace `arm64` with `x86_64` or `universal` as needed. Prefer `--app-only` for app and Swift changes once native outputs are prepared for the selected architecture. Xcode may still rebuild affected Swift packages and workspace dependencies. Run without `--app-only` when native sources or the required framework architectures change.
@@ -102,7 +103,7 @@ Only the modules you will touch most. Find anything else with `grep -rn "func Na
 
 ### Moving Code into Packages
 - Packages enforce runtime exclusivity (the app has it off), so `inout` access conflicts can trap after a move
-- `BETA`/`STABLE`/`ALPHA`/`APP_STORE` are false in packages in Xcode UI builds; `buildbox/build-mac.sh` passes the release channel, and `scripts/build-local.sh` passes `DEBUG`
+- `BETA`/`STABLE`/`ALPHA`/`APP_STORE` are false in packages in Xcode UI builds; `buildbox/build-mac.sh` passes the release channel, and `scripts/build-local.sh` passes `DEBUG` (plus `BETA` only with `--beta`)
 - App extensions like `Peer.isForum` and `Peer.displayLetters` shadow TelegramCore members; in a package call them through hooks
 
 
