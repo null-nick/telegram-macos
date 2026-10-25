@@ -18,6 +18,8 @@ import ProxyUtils
 import ChatModeTypes
 import CurrencyFormat
 
+private let settingsAccountsCollapsedKey = "settings.accountsCollapsed"
+private let settingsAccountsCollapsed = ValuePromise(UserDefaults.standard.bool(forKey: settingsAccountsCollapsedKey), ignoreRepeated: true)
 
 
 
@@ -137,7 +139,7 @@ private final class AnyUpdateStateEquatable  : Equatable {
 
 
 private enum AccountInfoEntry<Context: AccountContextProtocol> : TableItemListNodeEntry {
-    case info(index:Int, viewType: GeneralViewType, PeerEquatable, EngineStorySubscriptions.Item?)
+    case info(index:Int, viewType: GeneralViewType, PeerEquatable, EngineStorySubscriptions.Item?, accountsCollapsed: Bool?)
     case setStatus(index:Int, viewType: GeneralViewType, PeerEquatable)
     case setProfileColor(index:Int, viewType: GeneralViewType, PeerEquatable)
     case set2FaAlert(index:Int, viewType: GeneralViewType)
@@ -239,7 +241,7 @@ private enum AccountInfoEntry<Context: AccountContextProtocol> : TableItemListNo
     
     var index:Int {
         switch self {
-        case let .info(index, _, _, _):
+        case let .info(index, _, _, _, _):
             return index
         case let .setStatus(index, _, _):
             return index
@@ -310,8 +312,12 @@ private enum AccountInfoEntry<Context: AccountContextProtocol> : TableItemListNo
     
     func item(_ arguments: AccountInfoArguments<Context>, initialSize: NSSize) -> TableRowItem {
         switch self {
-        case let .info(_, viewType, peer, storyStats):
-            return AccountInfoItem(initialSize, stableId: stableId, viewType: viewType, inset: NSEdgeInsets(left: 12, right: 12), context: arguments.context, peer: peer.peer as! TelegramUser, storyStats: storyStats, action: {
+        case let .info(_, viewType, peer, storyStats, accountsCollapsed):
+            return AccountInfoItem(initialSize, stableId: stableId, viewType: viewType, inset: NSEdgeInsets(left: 12, right: 12), context: arguments.context, peer: peer.peer as! TelegramUser, storyStats: storyStats, accountsCollapsed: accountsCollapsed, toggleAccounts: {
+                let collapsed = !UserDefaults.standard.bool(forKey: settingsAccountsCollapsedKey)
+                UserDefaults.standard.set(collapsed, forKey: settingsAccountsCollapsedKey)
+                settingsAccountsCollapsed.set(collapsed)
+            }, action: {
                 let first: Atomic<Bool> = Atomic(value: true)
                 EditAccountInfoController(context: arguments.context, f: { controller in
                     arguments.presentController(controller, first.swap(false))
@@ -521,15 +527,18 @@ private func settingsMoneyIcon() -> CGImage? {
     return image.precomposed(flipVertical: true)
 }
 
-private func accountInfoEntries<Context: AccountContextProtocol>(peerView:PeerView, context: Context, accounts: [AccountWithInfo], language: TelegramLocalization, privacySettings: AccountPrivacySettings?, webSessions: WebSessionsContextState, proxySettings: (ProxySettings, ConnectionStatus), passportVisible: Bool, appUpdateState: Any?, hasFilters: Bool, sessionsCount: Int, unAuthStatus: NotificationAuthorizationStatus, has2fa: Bool, twoStepConfiguration: TwoStepVeriticationAccessConfiguration?, storyStats: EngineStorySubscriptions?, attachMenuBots: [AttachMenuBot], stars: StarsContext.State?, ton: StarsContext.State?, walletBalance: Int64?) -> [AccountInfoEntry<Context>] {
+private func accountInfoEntries<Context: AccountContextProtocol>(peerView:PeerView, context: Context, accounts: [AccountWithInfo], accountsCollapsed: Bool, language: TelegramLocalization, privacySettings: AccountPrivacySettings?, webSessions: WebSessionsContextState, proxySettings: (ProxySettings, ConnectionStatus), passportVisible: Bool, appUpdateState: Any?, hasFilters: Bool, sessionsCount: Int, unAuthStatus: NotificationAuthorizationStatus, has2fa: Bool, twoStepConfiguration: TwoStepVeriticationAccessConfiguration?, storyStats: EngineStorySubscriptions?, attachMenuBots: [AttachMenuBot], stars: StarsContext.State?, ton: StarsContext.State?, walletBalance: Int64?) -> [AccountInfoEntry<Context>] {
     var entries:[AccountInfoEntry<Context>] = []
+    let effectiveAccountsLimit = normalAccountsLimit + (context.premiumIsBlocked ? 0 : 1)
+    let canAddAccount = accounts.count < effectiveAccountsLimit && !context.isSupport
+    let hasAccountsBlock = !context.isSupport && (canAddAccount || accounts.contains(where: { $0.account.id != context.account.id }))
     
     var index:Int = 0
         
     if let peer = peerViewMainPeer(peerView) as? TelegramUser {
 //        entries.append(.whiteSpace(index: index, height: 20))
 //        index += 1
-        entries.append(.info(index: index, viewType: .singleItem, PeerEquatable(peer), storyStats?.accountItem))
+        entries.append(.info(index: index, viewType: .singleItem, PeerEquatable(peer), storyStats?.accountItem, accountsCollapsed: hasAccountsBlock ? accountsCollapsed : nil))
         index += 1
         
 //        entries.append(.whiteSpace(index: index, height: 20))
@@ -580,7 +589,7 @@ private func accountInfoEntries<Context: AccountContextProtocol>(peerView:PeerVi
 //
 //
     
-    if !context.isSupport {
+    if !context.isSupport, !accountsCollapsed {
         for account in accounts {
             if account.account.id != context.account.id {
                 entries.append(.accountRecord(index: index, viewType: .singleItem, info: account))
@@ -589,17 +598,10 @@ private func accountInfoEntries<Context: AccountContextProtocol>(peerView:PeerVi
         }
     }
     
-    let accountsLimit: Int = normalAccountsLimit
-    let effectiveLimit: Int
-    if context.premiumIsBlocked {
-        effectiveLimit = accountsLimit
-    } else {
-        effectiveLimit = accountsLimit + 1
-    }
 //    let hasPremium = accounts.filter({ $0.peer.isPremium })
 //    let normalCount = accounts.filter({ !$0.peer.isPremium }).count
 
-    if accounts.count < effectiveLimit, !context.isSupport {
+    if canAddAccount, !accountsCollapsed {
         entries.append(.addAccount(index: index, accounts, viewType: .singleItem))
         index += 1
     }
@@ -738,7 +740,7 @@ private func prepareEntries<Context: AccountContextProtocol>(left: [AppearanceWr
     let (removed, inserted, updated)  = proccessEntriesWithoutReverse(left, right: right) { entry -> TableRowItem in
         return entry.entry.item(arguments, initialSize: initialSize)
     }
-    return TableUpdateTransition(deleted: removed, inserted: inserted, updated: updated, animated: true)
+    return TableUpdateTransition(deleted: removed, inserted: inserted, updated: updated, animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
 }
 
 
@@ -1193,8 +1195,8 @@ open class AccountViewController<Context: AccountContextProtocol> : TelegramGene
             walletBalance = .single(nil)
         }
 
-        let apply = combineLatest(queue: prepareQueue, context.account.viewTracker.peerView(context.account.peerId), context.sharedContext.activeAccountsWithInfo, appearanceSignal, settings.get(), appUpdateState, hasFilters.get(), sessionsCount, SettingsHooks.shared.authorizationStatus(context), twoStep, storyStats, acceptBots.get(), context.starsContext.state, context.tonContext.state, walletBalance) |> map { peerView, accounts, appearance, settings, appUpdateState, hasFilters, sessionsCount, unAuthStatus, twoStepConfiguration, storyStats, attachMenuBots, stars, ton, walletBalance -> TableUpdateTransition in
-            let entries = accountInfoEntries(peerView: peerView, context: context, accounts: accounts.accounts, language: appearance.language, privacySettings: settings.0, webSessions: settings.1, proxySettings: settings.2, passportVisible: settings.3.0, appUpdateState: appUpdateState, hasFilters: hasFilters, sessionsCount: sessionsCount, unAuthStatus: unAuthStatus, has2fa: settings.3.1, twoStepConfiguration: twoStepConfiguration, storyStats: storyStats, attachMenuBots: attachMenuBots, stars: stars, ton: ton, walletBalance: walletBalance).map {AppearanceWrapperEntry(entry: $0, appearance: appearance)}
+        let apply = combineLatest(queue: prepareQueue, context.account.viewTracker.peerView(context.account.peerId), context.sharedContext.activeAccountsWithInfo, appearanceSignal, settings.get(), appUpdateState, hasFilters.get(), sessionsCount, SettingsHooks.shared.authorizationStatus(context), twoStep, storyStats, acceptBots.get(), context.starsContext.state, context.tonContext.state, walletBalance, settingsAccountsCollapsed.get()) |> map { peerView, accounts, appearance, settings, appUpdateState, hasFilters, sessionsCount, unAuthStatus, twoStepConfiguration, storyStats, attachMenuBots, stars, ton, walletBalance, accountsCollapsed -> TableUpdateTransition in
+            let entries = accountInfoEntries(peerView: peerView, context: context, accounts: accounts.accounts, accountsCollapsed: accountsCollapsed, language: appearance.language, privacySettings: settings.0, webSessions: settings.1, proxySettings: settings.2, passportVisible: settings.3.0, appUpdateState: appUpdateState, hasFilters: hasFilters, sessionsCount: sessionsCount, unAuthStatus: unAuthStatus, has2fa: settings.3.1, twoStepConfiguration: twoStepConfiguration, storyStats: storyStats, attachMenuBots: attachMenuBots, stars: stars, ton: ton, walletBalance: walletBalance).map {AppearanceWrapperEntry(entry: $0, appearance: appearance)}
             var size = atomicSize.modify {$0}
             size.width = max(size.width, 280)
             return prepareEntries(left: previous.swap(entries), right: entries, arguments: arguments, initialSize: size)

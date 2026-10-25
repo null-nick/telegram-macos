@@ -39,6 +39,8 @@ public class AccountInfoItem: GeneralRowItem {
     fileprivate let context: any AccountContextProtocol
     public let peer: TelegramUser
     public let storyStats: EngineStorySubscriptions.Item?
+    fileprivate let accountsCollapsed: Bool?
+    fileprivate let toggleAccounts: () -> Void
     private(set) var photos: [TelegramPeerPhoto] = []
 
     
@@ -48,10 +50,12 @@ public class AccountInfoItem: GeneralRowItem {
     
     public let avatarStoryIndicator: AvatarStoryIndicatorComponent?
     public let openStory:(StoryInitialIndex?)->Void
-    public init(_ initialSize:NSSize, stableId:AnyHashable, viewType: GeneralViewType, inset: NSEdgeInsets = NSEdgeInsets(left: 20, right: 20), context: any AccountContextProtocol, peer: TelegramUser, storyStats: EngineStorySubscriptions.Item?, action: @escaping()->Void, setStatus: @escaping(Control, TelegramUser)->Void, openStory:@escaping(StoryInitialIndex?)->Void) {
+    public init(_ initialSize:NSSize, stableId:AnyHashable, viewType: GeneralViewType, inset: NSEdgeInsets = NSEdgeInsets(left: 20, right: 20), context: any AccountContextProtocol, peer: TelegramUser, storyStats: EngineStorySubscriptions.Item?, accountsCollapsed: Bool?, toggleAccounts: @escaping()->Void, action: @escaping()->Void, setStatus: @escaping(Control, TelegramUser)->Void, openStory:@escaping(StoryInitialIndex?)->Void) {
         self.context = context
         self.peer = peer
         self.storyStats = storyStats
+        self.accountsCollapsed = accountsCollapsed
+        self.toggleAccounts = toggleAccounts
         self.setStatus = setStatus
         self.openStory = openStory
         let attr = NSMutableAttributedString()
@@ -114,13 +118,14 @@ public class AccountInfoItem: GeneralRowItem {
     }
     public override func makeSize(_ width: CGFloat, oldWidth: CGFloat) -> Bool {
         let success = super.makeSize(width, oldWidth: oldWidth)
-        textLayout.measure(width: width - 140)
-        activeTextlayout.measure(width: width - 140)
+        let textWidth = width - 140 - (accountsCollapsed == nil ? 0 : 24)
+        textLayout.measure(width: textWidth)
+        activeTextlayout.measure(width: textWidth)
         
         let hasControl = PremiumStatusControl.hasControl(peer, left: false)
         
-        self.titleLayout.measure(width: width - 140 - (hasControl ? 45 : 0))
-        self.titleActiveLayout.measure(width: width - 140 - (hasControl ? 45 : 0))
+        self.titleLayout.measure(width: textWidth - (hasControl ? 45 : 0))
+        self.titleActiveLayout.measure(width: textWidth - (hasControl ? 45 : 0))
         return success
     }
     
@@ -159,6 +164,7 @@ private class AccountInfoView : GeneralContainableRowView {
     private let titleView = TextView()
     private let textView: TextView = TextView()
     private let actionView: ImageView = ImageView()
+    private let accountsButton = ImageButton()
     
     private var photoVideoView: MediaPlayerView?
     private var photoVideoPlayer: MediaPlayer?
@@ -178,6 +184,8 @@ private class AccountInfoView : GeneralContainableRowView {
         
         avatarContainer.scaleOnClick = true
         actionView.isAccessibilityDecorative = true
+        accountsButton.setFrameSize(NSMakeSize(30, 30))
+        accountsButton.autohighlight = true
         
         textView.userInteractionEnabled = false
         textView.isSelectable = false
@@ -195,6 +203,7 @@ private class AccountInfoView : GeneralContainableRowView {
         container.addSubview(titleView)
         
         addSubview(container)
+        addSubview(accountsButton)
         avatarContainer.set(handler: { [weak self] _ in
             if let item = self?.item as? AccountInfoItem {
                 if let stories = item.storyStats, stories.storyCount > 0 {
@@ -225,6 +234,11 @@ private class AccountInfoView : GeneralContainableRowView {
         self.containerView.set(handler: { [weak self] _ in
             if let item = self?.item as? GeneralRowItem {
                 item.action()
+            }
+        }, for: .Click)
+        accountsButton.set(handler: { [weak self] _ in
+            if let item = self?.item as? AccountInfoItem, item.accountsCollapsed != nil {
+                item.toggleAccounts()
             }
         }, for: .Click)
         
@@ -388,6 +402,14 @@ private class AccountInfoView : GeneralContainableRowView {
             
             actionView.image = item.isSelected ? nil : theme.icons.generalNext
             actionView.sizeToFit()
+            actionView.isHidden = item.accountsCollapsed != nil
+            accountsButton.isHidden = item.accountsCollapsed == nil
+            if let collapsed = item.accountsCollapsed {
+                let label = collapsed ? strings().accountSettingsShowAccounts : strings().accountSettingsHideAccounts
+                accountsButton.set(image: collapsed ? theme.icons.chatSearchDownDisabled : theme.icons.chatSearchUpDisabled, for: .Normal)
+                accountsButton.setAccessibilityLabel(label)
+                accountsButton.toolTip = label
+            }
             avatarView.setPeer(account: item.context.account, peer: item.peer)
             textView.update(isSelect ? item.activeTextlayout : item.textLayout)
             if !item.photos.isEmpty {
@@ -509,6 +531,7 @@ private class AccountInfoView : GeneralContainableRowView {
         }
         
         actionView.centerY(x: containerView.frame.width - actionView.frame.width - 15)
+        accountsButton.centerY(x: containerView.frame.width - accountsButton.frame.width - 8)
         photoVideoView?.frame = avatarView.frame
     }
     
