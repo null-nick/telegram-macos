@@ -405,7 +405,7 @@ private class AccountInfoView : GeneralContainableRowView {
             actionView.isHidden = item.accountsCollapsed != nil
             accountsButton.isHidden = item.accountsCollapsed == nil
             if let collapsed = item.accountsCollapsed {
-                let label = collapsed ? strings().accountSettingsShowAccounts : strings().accountSettingsHideAccounts
+                let label = collapsed ? "Show Accounts" : "Hide Accounts" //TODOLANG
                 accountsButton.set(image: collapsed ? theme.icons.chatSearchDownDisabled : theme.icons.chatSearchUpDisabled, for: .Normal)
                 accountsButton.setAccessibilityLabel(label)
                 accountsButton.toolTip = label

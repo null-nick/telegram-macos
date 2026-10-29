@@ -211,7 +211,6 @@ public final class L10n {
   public static var accountSettingsGeneral: String  { return L10n.tr("Localizable", "AccountSettings.General") }
   /// Premium Gifting
   public static var accountSettingsGiftPremium: String  { return L10n.tr("Localizable", "AccountSettings.GiftPremium") }
-  public static var accountSettingsHideAccounts: String  { return L10n.tr("Localizable", "AccountSettings.HideAccounts") }
   /// Language
   public static var accountSettingsLanguage: String  { return L10n.tr("Localizable", "AccountSettings.Language") }
   /// Log Out
@@ -242,7 +241,6 @@ public final class L10n {
   public static var accountSettingsSetProfilePhoto: String  { return L10n.tr("Localizable", "AccountSettings.SetProfilePhoto") }
   /// Set a Username
   public static var accountSettingsSetUsername: String  { return L10n.tr("Localizable", "AccountSettings.SetUsername") }
-  public static var accountSettingsShowAccounts: String  { return L10n.tr("Localizable", "AccountSettings.ShowAccounts") }
   /// My Stars
   public static var accountSettingsStars: String  { return L10n.tr("Localizable", "AccountSettings.Stars") }
   /// Stickers and Emoji
