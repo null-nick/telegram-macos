@@ -72,12 +72,10 @@ class ChatSearchView: SearchView {
     
     var countValue:(current:Int, total:Int) = (current: 0, total: 0) {
         didSet {
-            if countValue.current > 0 && countValue.total > 0 {
+            if countValue.total > 0 {
                 addSubview(countView)
-                updateClearVisibility(false)
             } else {
                 countView.removeFromSuperview()
-                updateClearVisibility(true)
             }
             updateLocalizationAndTheme(theme: theme)
             self.needsLayout = true
@@ -95,7 +93,7 @@ class ChatSearchView: SearchView {
     }
     
     override var rightAccessory: NSView {
-        return countValue.current > 0 && countValue.total > 0 ? countView : super.rightAccessory
+        return countValue.total > 0 ? countView : super.rightAccessory
     }
     
     required init?(coder: NSCoder) {
@@ -110,7 +108,7 @@ class ChatSearchView: SearchView {
         fromView?.backgroundColor = theme.colors.grayBackground
         textTokenView?.backgroundColor = theme.colors.grayBackground
         
-        countView.backgroundColor = theme.colors.grayBackground
+        countView.backgroundColor = .clear
 
         let countLayout = TextViewLayout(.initialize(string: strings().chatSearchCount(countValue.current, countValue.total), color: theme.search.placeholderColor, font: .normal(.text)))
         countLayout.measure(width: .greatestFiniteMagnitude)
@@ -123,6 +121,16 @@ class ChatSearchView: SearchView {
         }
         
         super.updateLocalizationAndTheme(theme: theme)
+        updateClearButton()
+    }
+
+    private func updateClearButton() {
+        updateClearVisibility(state == .Focus && !isEmpty && countView.superview == nil)
+    }
+
+    override func change(state: SearchFieldState, _ animated: Bool) {
+        super.change(state: state, animated)
+        updateClearButton()
     }
     
     deinit {
@@ -187,6 +195,7 @@ class ChatSearchView: SearchView {
         default:
             break
         }
+        updateClearButton()
     }
     
     override var placeholderTextInset:CGFloat {

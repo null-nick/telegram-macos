@@ -67,21 +67,24 @@ public extension NSAttributedString {
         
         let string:NSMutableAttributedString = self.mutableCopy() as! NSMutableAttributedString
         
-        while true {
-            let range = string.string.nsstring.range(of: "\u{2028}")
-            if range.location != NSNotFound {
-                string.replaceCharacters(in: range, with: "\n")
-            } else {
-                break
+        let originalText = string.string.nsstring
+        let lineSeparatorRange = originalText.range(of: "\u{2028}")
+        let objectReplacementRange = originalText.range(of: "\u{fffc}", options: .literal)
+        if lineSeparatorRange.location != NSNotFound || objectReplacementRange.location != NSNotFound {
+            let mutableString = string.mutableString
+            func replaceSeparator(_ separator: String, options: NSString.CompareOptions, firstRange: NSRange) {
+                var range = firstRange
+                while range.location != NSNotFound {
+                    string.replaceCharacters(in: range, with: "\n")
+                    let nextLocation = NSMaxRange(range)
+                    guard nextLocation < string.length else {
+                        break
+                    }
+                    range = mutableString.range(of: separator, options: options, range: NSRange(location: nextLocation, length: string.length - nextLocation))
+                }
             }
-        }
-        while true {
-            let range = string.string.nsstring.range(of: "\u{fffc}", options: .literal)
-            if range.location != NSNotFound {
-                string.replaceCharacters(in: range, with: "\n")
-            } else {
-                break
-            }
+            replaceSeparator("\u{2028}", options: [], firstRange: lineSeparatorRange)
+            replaceSeparator("\u{fffc}", options: .literal, firstRange: objectReplacementRange)
         }
         var range = string.string.nsstring.rangeOfCharacter(from: NSCharacterSet.whitespacesAndNewlines)
         while !string.string.isEmpty, range.location == 0 {
@@ -116,15 +119,9 @@ public extension NSAttributedString {
     }
     
     func replaceNewlinesWithSpaces(in attributedString: NSAttributedString) -> NSAttributedString {
-        // Create a mutable copy of the input attributed string
         let mutableAttributedString = NSMutableAttributedString(attributedString: attributedString)
-        
-        // Replace all occurrences of newline characters with space characters
         let range = NSRange(location: 0, length: mutableAttributedString.length)
-        let newlineRegex = try! NSRegularExpression(pattern: "\\n")
-        newlineRegex.replaceMatches(in: mutableAttributedString.mutableString, options: [], range: range, withTemplate: " ")
-        
-        // Return the modified attributed string
+        mutableAttributedString.mutableString.replaceOccurrences(of: "\n", with: " ", options: .literal, range: range)
         return mutableAttributedString
     }
     
@@ -3391,7 +3388,7 @@ private func extractRelativeDates(from text: String, referenceDate: Date) -> [Ex
         { s in
             let u = s
             if u.hasPrefix("hour") || u == "h" || u.hasPrefix("hr")
-                || u.hasPrefix("час") || u.hasPrefix("год") || u.hasPrefix("гад") // ru/uk/be
+                || u.hasPrefix("час") || u.hasPrefix("годин") || u.hasPrefix("гадз") // ru/uk/be
                 || u.hasPrefix("st") || u.hasPrefix("std") // de Stunde
                 || u.hasPrefix("heure") || u.hasPrefix("heures") // fr
                 || u.hasPrefix("hora") || u.hasPrefix("horas") // es
@@ -3483,7 +3480,7 @@ private func extractRelativeDates(from text: String, referenceDate: Date) -> [Ex
 
     // Pattern B examples:
     // "20m", "2h", "3d", "1w", "20 min", "10мин", "5хв", "2soat"
-    let patternB = #"\b(\d+(?:[.,]\d+)?)\s*([[:alpha:]\p{M}]{1,12}\.?)\b"#
+    let patternB = #"(?<!\S)(\d+(?:[.,]\d+)?)\s*([[:alpha:]\p{M}]{1,12}\.?)\b"#
 
     // Pattern C examples (implied "1"):
     // "через минуту", "через час", "in a minute", "in an hour", "nach einer Stunde"
