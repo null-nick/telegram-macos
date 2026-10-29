@@ -181,7 +181,18 @@ public class FastSettings {
     private static let kContactsSort = "kContactsSort";
     
     private static let kAgeVerification = "kAgeVerification2";
-    
+
+    private static let kAccountsCollapsed = "settings.accountsCollapsed"
+
+    public static var accountsCollapsed: Bool {
+        get {
+            return UserDefaults.standard.bool(forKey: kAccountsCollapsed)
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: kAccountsCollapsed)
+        }
+    }
+
     public static var contactsSort: ContactsSort {
         get {
             if let value = UserDefaults.standard.value(forKey: kContactsSort) as? Int32 {

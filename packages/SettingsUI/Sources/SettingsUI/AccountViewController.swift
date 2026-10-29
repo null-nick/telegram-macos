@@ -18,8 +18,7 @@ import ProxyUtils
 import ChatModeTypes
 import CurrencyFormat
 
-private let settingsAccountsCollapsedKey = "settings.accountsCollapsed"
-private let settingsAccountsCollapsed = ValuePromise(UserDefaults.standard.bool(forKey: settingsAccountsCollapsedKey), ignoreRepeated: true)
+private let settingsAccountsCollapsed = ValuePromise(FastSettings.accountsCollapsed, ignoreRepeated: true)
 
 
 
@@ -314,8 +313,8 @@ private enum AccountInfoEntry<Context: AccountContextProtocol> : TableItemListNo
         switch self {
         case let .info(_, viewType, peer, storyStats, accountsCollapsed):
             return AccountInfoItem(initialSize, stableId: stableId, viewType: viewType, inset: NSEdgeInsets(left: 12, right: 12), context: arguments.context, peer: peer.peer as! TelegramUser, storyStats: storyStats, accountsCollapsed: accountsCollapsed, toggleAccounts: {
-                let collapsed = !UserDefaults.standard.bool(forKey: settingsAccountsCollapsedKey)
-                UserDefaults.standard.set(collapsed, forKey: settingsAccountsCollapsedKey)
+                let collapsed = !FastSettings.accountsCollapsed
+                FastSettings.accountsCollapsed = collapsed
                 settingsAccountsCollapsed.set(collapsed)
             }, action: {
                 let first: Atomic<Bool> = Atomic(value: true)
@@ -736,11 +735,11 @@ private func accountInfoEntries<Context: AccountContextProtocol>(peerView:PeerVi
     return entries
 }
 
-private func prepareEntries<Context: AccountContextProtocol>(left: [AppearanceWrapperEntry<AccountInfoEntry<Context>>], right: [AppearanceWrapperEntry<AccountInfoEntry<Context>>], arguments: AccountInfoArguments<Context>, initialSize: NSSize) -> TableUpdateTransition {
+private func prepareEntries<Context: AccountContextProtocol>(left: [AppearanceWrapperEntry<AccountInfoEntry<Context>>], right: [AppearanceWrapperEntry<AccountInfoEntry<Context>>], arguments: AccountInfoArguments<Context>, initialSize: NSSize, reduceMotion: Bool) -> TableUpdateTransition {
     let (removed, inserted, updated)  = proccessEntriesWithoutReverse(left, right: right) { entry -> TableRowItem in
         return entry.entry.item(arguments, initialSize: initialSize)
     }
-    return TableUpdateTransition(deleted: removed, inserted: inserted, updated: updated, animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+    return TableUpdateTransition(deleted: removed, inserted: inserted, updated: updated, animated: !reduceMotion)
 }
 
 
@@ -1195,11 +1194,12 @@ open class AccountViewController<Context: AccountContextProtocol> : TelegramGene
             walletBalance = .single(nil)
         }
 
+        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         let apply = combineLatest(queue: prepareQueue, context.account.viewTracker.peerView(context.account.peerId), context.sharedContext.activeAccountsWithInfo, appearanceSignal, settings.get(), appUpdateState, hasFilters.get(), sessionsCount, SettingsHooks.shared.authorizationStatus(context), twoStep, storyStats, acceptBots.get(), context.starsContext.state, context.tonContext.state, walletBalance, settingsAccountsCollapsed.get()) |> map { peerView, accounts, appearance, settings, appUpdateState, hasFilters, sessionsCount, unAuthStatus, twoStepConfiguration, storyStats, attachMenuBots, stars, ton, walletBalance, accountsCollapsed -> TableUpdateTransition in
             let entries = accountInfoEntries(peerView: peerView, context: context, accounts: accounts.accounts, accountsCollapsed: accountsCollapsed, language: appearance.language, privacySettings: settings.0, webSessions: settings.1, proxySettings: settings.2, passportVisible: settings.3.0, appUpdateState: appUpdateState, hasFilters: hasFilters, sessionsCount: sessionsCount, unAuthStatus: unAuthStatus, has2fa: settings.3.1, twoStepConfiguration: twoStepConfiguration, storyStats: storyStats, attachMenuBots: attachMenuBots, stars: stars, ton: ton, walletBalance: walletBalance).map {AppearanceWrapperEntry(entry: $0, appearance: appearance)}
             var size = atomicSize.modify {$0}
             size.width = max(size.width, 280)
-            return prepareEntries(left: previous.swap(entries), right: entries, arguments: arguments, initialSize: size)
+            return prepareEntries(left: previous.swap(entries), right: entries, arguments: arguments, initialSize: size, reduceMotion: reduceMotion)
         } |> deliverOnMainQueue
         
         disposable.set(apply.start(next: { [weak self] transition in
