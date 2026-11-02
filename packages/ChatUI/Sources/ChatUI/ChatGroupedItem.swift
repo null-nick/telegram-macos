@@ -192,6 +192,10 @@ public class ChatGroupedItem: ChatRowItem {
                     showChatGallery(context: context, message: message, self.table, parameters, type: type, chatMode: self.chatInteraction.mode, chatLocation: self.chatInteraction.chatLocation, contextHolder: self.chatInteraction.contextHolder(), cachedPeerData: self.chatInteraction.presentation.cachedData)
                 }
                 
+                parameters.showMessage = { [weak self] message in
+                    self?.chatInteraction.focusMessageId(nil, .init(messageId: message.id, string: nil), .CenterEmpty)
+                }
+
                 self.parameters.append(parameters)
             case .photoOrVideo:
                 self.parameters.append(ChatMediaGalleryParameters(showMedia: { [weak self] message in
@@ -393,6 +397,11 @@ public class ChatGroupedItem: ChatRowItem {
         var _width: CGFloat = 0
         switch layout.type {
         case .files:
+            let maxCaptionWidth = min(width, 360) - (hasBubble ? bubbleDefaultInnerInset : 0)
+            for layout in captionLayouts {
+                layout.layout.measure(width: maxCaptionWidth)
+                _width = max(_width, layout.layout.size.width + (hasBubble ? bubbleDefaultInnerInset : 0))
+            }
             for parameter in parameters {
                 let value = parameter.makeLabelsForWidth(min(width, 360))
                 _width = max(_width, value)

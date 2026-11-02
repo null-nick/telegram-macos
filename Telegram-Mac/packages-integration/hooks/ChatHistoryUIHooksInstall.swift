@@ -322,6 +322,8 @@ func installChatHistoryUIHooks() {
         return ForumUI.openTopic(threadId, peerId: peerId, context: context as! AccountContext, messageId: messageId, animated: true, addition: true)
     }, makeChannelParticipantController: { context, peerId, participant in
         return ChannelParticipantController(context: context as! AccountContext, peerId: peerId, participant: participant)
+    }, participantModerationMenuItems: { context, channel, member, participant in
+        return channelParticipantModerationMenuItems(context: context, channel: channel, member: member, participant: participant)
     }, makeRestrictedModalController: { context, peerId, memberId, initialParticipant, updated in
         return RestrictedModalController(context as! AccountContext, peerId: peerId, memberId: memberId, initialParticipant: initialParticipant, updated: updated)
     }, makeChannelAdminModalController: { context, peerId, adminId, initialParticipant, updated, upgradedToSupergroup in
@@ -382,8 +384,8 @@ func installChatHistoryUIHooks() {
         return (context as! AccountContext).giftStickers
     }, messageNewReactions: { message, reaction, isTags in
         return message.newReactions(with: reaction, isTags: isTags)
-    }, makeReactionsWindow: { context, peerId, selectedItems, react in
-        return ReactionsWindowController(context as! AccountContext, peerId: peerId, selectedItems: selectedItems.map(mapChatHistoryEmojiSelectedItem), react: react)
+    }, makeReactionsWindow: { context, peerId, selectedItems, orderedTags, react, reactLarge in
+        return ReactionsWindowController(context as! AccountContext, peerId: peerId, selectedItems: selectedItems.map(mapChatHistoryEmojiSelectedItem), react: react, reactLarge: reactLarge, orderedTags: orderedTags)
     }, currencyAmount: { context, amount, comission in
         return (context as! AccountContext).amount(amount: amount, comission: comission)
     }, currentCountriesConfiguration: { context in

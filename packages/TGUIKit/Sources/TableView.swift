@@ -1043,6 +1043,9 @@ open class TableView: ScrollView, NSTableViewDelegate,NSTableViewDataSource,Sele
     private let mergePromise:Promise<TableUpdateTransition> = Promise()
     private let mergeDisposable:MetaDisposable = MetaDisposable()
     
+    private var unresortedList: [TableRowItem]?
+    private var unresortedListCarried: Bool = false
+
     public var resortController: TableResortController? {
         didSet {
             if oldValue != nil {
@@ -2399,6 +2402,10 @@ open class TableView: ScrollView, NSTableViewDelegate,NSTableViewDataSource,Sele
                 self.beginTableUpdates()
 
                 if isValidDrop {
+                    if start != current, self.unresortedList == nil || self.unresortedListCarried {
+                        self.unresortedList = self.list
+                        self.unresortedListCarried = false
+                    }
                     self.moveItem(from: start, to: current, redraw: false, animation: .none)
                     self.tableView.removeRows(at: IndexSet(integer: start), withAnimation: .none)
                     self.tableView.insertRows(at: IndexSet(integer: current), withAnimation: .none)
@@ -2436,6 +2443,109 @@ open class TableView: ScrollView, NSTableViewDelegate,NSTableViewDataSource,Sele
 
     private func isResortRangeValid(_ controller: TableResortController) -> Bool {
         return controller.resortRange.location != NSNotFound && controller.resortRange.max <= self.list.count
+    }
+
+    private func listAfterMerge(_ items: [TableRowItem], deleted: [Int], inserted: [(Int, TableRowItem)], updated: [(Int, TableRowItem)]) -> [TableRowItem]? {
+        guard Set(updated.map { $0.0 }).count == updated.count else {
+            return nil
+        }
+        var items = items
+        for index in deleted.reversed() {
+            guard index >= 0 else {
+                return nil
+            }
+            if index < items.count {
+                items.remove(at: index)
+            }
+        }
+        for (index, item) in inserted {
+            guard index >= 0 else {
+                return nil
+            }
+            items.insert(item, at: min(index, items.count))
+        }
+        for (index, item) in updated {
+            guard index >= 0 else {
+                return nil
+            }
+            if index < items.count {
+                items[index] = item
+            }
+        }
+        return items
+    }
+
+    private func hasUniqueStableIds(_ items: [TableRowItem]) -> Bool {
+        return Set(items.map { $0.stableId }).count == items.count
+    }
+
+    private func hasSameRows(_ lhs: [TableRowItem], _ rhs: [TableRowItem]) -> Bool {
+        let lhsIds = Set(lhs.map { ObjectIdentifier($0) })
+        return lhs.count == rhs.count && lhsIds.count == lhs.count && lhsIds == Set(rhs.map { ObjectIdentifier($0) })
+    }
+
+    private func adjustedForResort(_ transition: TableUpdateTransition) -> (deleted: [Int], updated: [(Int, TableRowItem)], settlesResort: Bool) {
+        let unchanged = (transition.deleted, transition.updated, false)
+        guard let unresorted = self.unresortedList else {
+            return unchanged
+        }
+        self.unresortedList = nil
+        self.unresortedListCarried = false
+
+        guard hasSameRows(unresorted, self.list) else {
+            return unchanged
+        }
+        guard let expected = listAfterMerge(unresorted, deleted: transition.deleted, inserted: transition.inserted, updated: transition.updated), let current = listAfterMerge(self.list, deleted: transition.deleted, inserted: transition.inserted, updated: transition.updated) else {
+            return unchanged
+        }
+        if current.elementsEqual(expected, by: { $0 === $1 }) {
+            return (transition.deleted, transition.updated, true)
+        }
+        if hasUniqueStableIds(current) {
+            if hasSameRows(current, expected) {
+                self.unresortedList = expected
+                self.unresortedListCarried = true
+            }
+            return unchanged
+        }
+
+        var listIndices: [ObjectIdentifier: Int] = [:]
+        for (index, item) in self.list.enumerated() {
+            listIndices[ObjectIdentifier(item)] = index
+        }
+        var deleted: [Int] = []
+        for index in transition.deleted {
+            guard index >= 0, index < unresorted.count, let listIndex = listIndices[ObjectIdentifier(unresorted[index])] else {
+                return unchanged
+            }
+            deleted.append(listIndex)
+        }
+        deleted.sort()
+
+        guard let expectedBeforeUpdates = listAfterMerge(unresorted, deleted: transition.deleted, inserted: transition.inserted, updated: []), let currentBeforeUpdates = listAfterMerge(self.list, deleted: deleted, inserted: transition.inserted, updated: []) else {
+            return unchanged
+        }
+        var currentIndices: [ObjectIdentifier: Int] = [:]
+        for (index, item) in currentBeforeUpdates.enumerated() {
+            currentIndices[ObjectIdentifier(item)] = index
+        }
+        var updated: [(Int, TableRowItem)] = []
+        for (index, item) in transition.updated {
+            guard index >= 0, index < expectedBeforeUpdates.count, let currentIndex = currentIndices[ObjectIdentifier(expectedBeforeUpdates[index])] else {
+                return unchanged
+            }
+            updated.append((currentIndex, item))
+        }
+
+        guard let adjusted = listAfterMerge(self.list, deleted: deleted, inserted: transition.inserted, updated: updated), hasUniqueStableIds(adjusted), hasSameRows(adjusted, expected) else {
+            return unchanged
+        }
+        if adjusted.elementsEqual(expected, by: { $0 === $1 }) {
+            return (deleted, updated, true)
+        }
+        self.unresortedList = expected
+        self.unresortedListCarried = true
+        return (deleted, updated, false)
     }
 
     private var maxResortHeight: CGFloat {
@@ -3312,6 +3422,8 @@ open class TableView: ScrollView, NSTableViewDelegate,NSTableViewDataSource,Sele
         assertOnMainThread()
         assert(!updating)
 
+        let (deleted, updated, settlesResort) = self.adjustedForResort(transition)
+
         var groupInOne = transition.groupInOne
         var groupedListHeight: CGFloat?
         if !groupInOne, mergesSaveVisibleInOneGroup, !appearAnimated, !transition.animated, case let .saveVisible(side, false) = transition.state {
@@ -3321,7 +3433,7 @@ open class TableView: ScrollView, NSTableViewDelegate,NSTableViewDataSource,Sele
             case .lower, .upper:
                 let rows = tableView.numberOfRows
                 let current = rows > 0 ? tableView.rect(ofRow: 0).union(tableView.rect(ofRow: rows - 1)).height : 0
-                let removed = transition.deleted.reduce(CGFloat(0)) { $0 + ($1 < list.count ? list[$1].heightValue : 0) }
+                let removed = deleted.reduce(CGFloat(0)) { $0 + ($1 < list.count ? list[$1].heightValue : 0) }
                 let added = transition.inserted.reduce(CGFloat(0)) { $0 + $1.1.heightValue }
                 let next = current - removed + added
                 let clipHeight = clipView.bounds.height
@@ -3368,9 +3480,11 @@ open class TableView: ScrollView, NSTableViewDelegate,NSTableViewDataSource,Sele
             self.tableView.beginUpdates()
         }
         
-        for rdx in transition.deleted.reversed() {
+        for rdx in deleted.reversed() {
             let effect:NSTableView.AnimationOptions
-            if case let .none(interface) = transition.state, interface != nil {
+            if settlesResort {
+                effect = .none
+            } else if case let .none(interface) = transition.state, interface != nil {
                 effect = (visibleRange.indexIn(rdx) || !transition.animateVisibleOnly) ? .effectFade : .none
             } else {
                 effect = transition.animated && (visibleRange.indexIn(rdx) || !transition.animateVisibleOnly) ? .effectFade : .none
@@ -3396,7 +3510,9 @@ open class TableView: ScrollView, NSTableViewDelegate,NSTableViewDataSource,Sele
         
         for (idx, item) in transition.inserted {
             let effect:NSTableView.AnimationOptions
-            if case let .none(interface) = transition.state, interface != nil {
+            if settlesResort {
+                effect = .none
+            } else if case let .none(interface) = transition.state, interface != nil {
                 effect = .none
             } else {
                 effect = transition.animated && (visibleRange.indexIn(idx) || visibleRange.isNone || !transition.animateVisibleOnly) ? .effectFade : .none
@@ -3431,7 +3547,7 @@ open class TableView: ScrollView, NSTableViewDelegate,NSTableViewDataSource,Sele
             
             if let current = removed.first(where: { $0.0 == index })?.1 {
                 item = current
-            } else if let current = transition.updated.first(where: { $0.0 == index })?.1 {
+            } else if let current = updated.first(where: { $0.0 == index })?.1 {
                 item = current
             } else {
                 item = nil
@@ -3445,7 +3561,7 @@ open class TableView: ScrollView, NSTableViewDelegate,NSTableViewDataSource,Sele
             if case let .none(interface) = transition.state, interface != nil {
                 accept = false
             }
-            inserted.0.view?.onInsert(inserted.1, appearAnimated: appearAnimated && accept && !transition.deleted.contains(inserted.0.index))
+            inserted.0.view?.onInsert(inserted.1, appearAnimated: appearAnimated && accept && !settlesResort && !deleted.contains(inserted.0.index))
         }
         
                 
@@ -3556,13 +3672,16 @@ open class TableView: ScrollView, NSTableViewDelegate,NSTableViewDataSource,Sele
 //        if case let .none(interface) = transition.state, interface != nil {
 //            animated = true
 //        }
-        for (index,item) in transition.updated {
+        for (index,item) in updated {
             var animated: Bool
             animated = (visibleRange.indexIn(index) || !transition.animateVisibleOnly)
             if case .saveVisible = state {
                 animated = transition.animated
             } else if case .none(nil) = state {
                 animated = transition.animated
+            }
+            if settlesResort {
+                animated = false
             }
             if let resizeAnchor = resizeAnchor, resizeAnchor.stableId == item.stableId {
                 if resizeAnchor.animated {
@@ -4153,7 +4272,7 @@ open class TableView: ScrollView, NSTableViewDelegate,NSTableViewDataSource,Sele
             if !tableView.isFlipped {
                 rowRect.origin = NSZeroPoint
             } else {
-                rowRect.origin = NSMakePoint(0, max(0,documentSize.height - frame.height))
+                rowRect.origin = NSMakePoint(0, max(0, documentSize.height - frame.height + (self is HorizontalTableView ? 0 : contentInsets.bottom)))
             }
         case let .up(_animate):
             animate = _animate
@@ -4177,7 +4296,8 @@ open class TableView: ScrollView, NSTableViewDelegate,NSTableViewDataSource,Sele
         innerId = innerId ?? focus.innerId.flatMap(AnyHashable.init)
         
         let bottomInset = self.bottomInset != 0 ? (self.bottomInset) : 0
-        let height:CGFloat = self is HorizontalTableView ? frame.width : frame.height
+        let contentBottomInset: CGFloat = tableView.isFlipped && !(self is HorizontalTableView) ? contentInsets.bottom : 0
+        let height:CGFloat = self is HorizontalTableView ? frame.width : max(0, frame.height - contentBottomInset)
 
         let documentHeight = documentSize.height
         
@@ -4231,7 +4351,7 @@ open class TableView: ScrollView, NSTableViewDelegate,NSTableViewDataSource,Sele
             
             if toVisible  {
                 let view = self.viewNecessary(at: item.index)
-                if let view = view, view.visibleRect.height == item.heightValue {
+                if let view = view, view.visibleRect.height == item.heightValue, contentBottomInset == 0 || self.rectOf(item: item).maxY <= clipView.bounds.maxY - contentBottomInset {
                     if focus.focus {
                         DispatchQueue.main.async {
                             view.focusAnimation(innerId, text: focus.string, range: focus.range)
@@ -4249,7 +4369,7 @@ open class TableView: ScrollView, NSTableViewDelegate,NSTableViewDataSource,Sele
       
         
         if self.tableView.isFlipped {
-            rowRect.origin.y = min(rowRect.origin.y, documentSize.height - clipView.bounds.height)
+            rowRect.origin.y = min(rowRect.origin.y, documentSize.height - clipView.bounds.height + contentBottomInset)
         }
         
         if let string = focus.string, let item {
